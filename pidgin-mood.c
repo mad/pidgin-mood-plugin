@@ -48,7 +48,7 @@
 #include <conversation.h>
 
 #define DBGID "mood"
-#define PREF_PREFIX "/plugins/gtk/juick-plugin"
+#define PREF_PREFIX "/plugins/gtk/mood-plugin"
 #define PREF_MOOD_PATH PREF_PREFIX "/moods_path"
 
 struct mood_button_list {
