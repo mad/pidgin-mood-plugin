@@ -45,6 +45,7 @@
 #include <gtkimhtml.h>
 #include <gtkutils.h>
 #include <gtknotify.h>
+#include <gtkimhtmltoolbar.h>
 #include <conversation.h>
 
 #define DBGID "mood"
@@ -127,7 +128,7 @@ char *current_mood;
 static void mood_make_stanza(PurpleConnection *, char **, gpointer );
 static void mood_create_button(PidginConversation *);
 static void mood_make_button_list(GtkWidget *, struct mood_button_list *);
-static void mood_make_dialog_cb(GtkWidget *);
+static void mood_make_dialog_cb(GtkWidget *, PidginConversation *);
 static void mood_button_cb(GtkWidget *, GtkWidget *);
 static GtkWidget *mood_button_from_file(const char *, char *, GtkWidget *);
 static void mood_set_path_cb (GtkWidget *, GtkWidget *);
@@ -193,7 +194,7 @@ mood_create_button(PidginConversation *gtkconv)
   gtk_box_pack_start(GTK_BOX(bbox), image, FALSE, FALSE, 0);
 
   g_signal_connect(G_OBJECT(mood_button), "clicked", G_CALLBACK(mood_make_dialog_cb),
-		   NULL);
+		   gtkconv);
 
   gtk_box_pack_start(GTK_BOX(gtkconv->toolbar), mood_button, FALSE, FALSE, 0);
 
@@ -202,15 +203,18 @@ mood_create_button(PidginConversation *gtkconv)
 }
 
 static void
-mood_make_dialog_cb(GtkWidget *fake)
+mood_make_dialog_cb(GtkWidget *fake, PidginConversation *gtkconv)
 {
   GtkWidget *dialog, *vbox;
   GtkWidget *mood_table = NULL;
   GtkWidget *scrolled, *viewport;
+  GtkIMHtmlToolbar *toolbar = gtkconv->toolbar;
 
   struct mood_button_list *ml, *prev_ml = NULL, *tmp_ml = NULL;
   gchar *mood_full_path, *mood_path;
   int i;
+
+  mood_path = purple_prefs_get_string(PREF_MOOD_PATH);
 
   dialog = pidgin_create_dialog("Mood", 0, "mood_dialog", FALSE);
   gtk_window_set_position(GTK_WINDOW(dialog), GTK_WIN_POS_MOUSE);
@@ -223,10 +227,10 @@ mood_make_dialog_cb(GtkWidget *fake)
     if (!tmp_ml) {
       tmp_ml = ml;
     }
-    mood_path = purple_prefs_get_string(PREF_MOOD_PATH);
     mood_full_path = g_strdup_printf("%s/%s.png", mood_path, moodstrings[i]);
     ml->text = g_strdup(moodstrings[i]);
     ml->button = mood_button_from_file(mood_full_path, moodstrings[i], dialog);
+    gtk_tooltips_set_tip(toolbar->tooltips, ml->button, moodstrings[i], NULL);
     ml->next = NULL;
 
     if (prev_ml) {
