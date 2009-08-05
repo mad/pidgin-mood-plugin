@@ -510,6 +510,8 @@ init_plugin(PurplePlugin *plugin)
 #endif
 
   mood_path = g_strdup_printf("%s/.purple/plugins/moods/", home);
+
+  purple_prefs_add_none(PREF_PREFIX);
   purple_prefs_add_string(PREF_MOOD_PATH, mood_path);
 
   g_free(mood_path);
