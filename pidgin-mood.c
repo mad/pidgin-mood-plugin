@@ -52,6 +52,11 @@
 #define PREF_PREFIX "/plugins/gtk/mood-plugin"
 #define PREF_MOOD_PATH PREF_PREFIX "/moods_path"
 
+struct mood_data {
+  GtkWidget *dialog;
+  PidginConversation *gtkconv;
+};
+
 struct mood_button_list {
   GtkWidget *button;
   gchar *text;
@@ -120,18 +125,24 @@ static const char * const moodstrings[] = {
         "surprised",
         "thirsty",
         "worried",
+	"mood-done", // It is not default mood!
         NULL
 };
 
-char *current_mood;
+char *current_mood = NULL;
+char *current_mood_message = NULL;
 
 static void mood_make_stanza(PurpleConnection *, char **, gpointer );
 static void mood_create_button(PidginConversation *);
+static void mood_remove_button(PidginConversation *);
 static void mood_make_button_list(GtkWidget *, struct mood_button_list *);
 static void mood_make_dialog_cb(GtkWidget *, PidginConversation *);
-static void mood_button_cb(GtkWidget *, GtkWidget *);
-static GtkWidget *mood_button_from_file(const char *, char *, GtkWidget *);
+static void mood_button_cb(GtkWidget *, struct mood_data *mdata);
+static GtkWidget *mood_button_from_file(const char *, char *, GtkWidget *,
+					PidginConversation *);
 static void mood_set_path_cb (GtkWidget *, GtkWidget *);
+static void mood_create_status(GtkWidget *, PidginConversation *);
+static void mood_remove_status(PidginConversation *);
 
 static void disconnect_prefs_callbacks(GtkObject *, gpointer );
 
@@ -139,7 +150,7 @@ static void disconnect_prefs_callbacks(GtkObject *, gpointer );
 static void
 mood_make_stanza(PurpleConnection *gc, char **packet, gpointer null)
 {
-  xmlnode *moodnode;
+  xmlnode *moodnode, *text;
 
   if (!current_mood || !xmlnode_get_child((xmlnode*)*packet, "body"))
     return;
@@ -150,23 +161,25 @@ mood_make_stanza(PurpleConnection *gc, char **packet, gpointer null)
   xmlnode_set_namespace(moodnode, "http://jabber.org/protocol/mood");
   xmlnode_new_child(moodnode, current_mood);
 
-  xmlnode_insert_child((xmlnode*)*packet, moodnode);
+  // Add <text> </text> if mood_message exists
+  if (current_mood_message) {
+    text = xmlnode_new("text");
+    xmlnode_insert_data(text, current_mood_message, strlen(current_mood_message));
+    xmlnode_insert_child(moodnode, text);
+  }
 
-  g_free(current_mood);
-  current_mood = NULL;
+  xmlnode_insert_child((xmlnode*)*packet, moodnode);
 }
 
 static void
 mood_create_button(PidginConversation *gtkconv)
 {
-  GtkWidget *mood_button, *image, *bbox;
+  GtkWidget *mood_button, *image, *bbox, *hbox;
   PurpleConversation *conv;
-  const char *who;
   gchar *tmp, *mood_path;
   gchar *protocol;
 
   conv = gtkconv->active_conv;
-  who = purple_conversation_get_name(conv);
   protocol = purple_account_get_protocol_name(conv->account);
 
   purple_debug_misc(DBGID, "%s\n", protocol);
@@ -180,6 +193,8 @@ mood_create_button(PidginConversation *gtkconv)
   if (mood_button)
     return;
 
+  hbox = g_object_get_data(G_OBJECT(gtkconv->toolbar), "wide-view");
+
   mood_button = gtk_button_new();
   bbox = gtk_vbox_new(FALSE, 0);
   g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_bbox", bbox);
@@ -188,15 +203,17 @@ mood_create_button(PidginConversation *gtkconv)
   gtk_button_set_relief(GTK_BUTTON(mood_button), GTK_RELIEF_NONE);
   gtk_container_add(GTK_CONTAINER(mood_button), bbox);
   mood_path = purple_prefs_get_string(PREF_MOOD_PATH);
-  tmp = g_strdup_printf("%s/amazed.png", mood_path);
+
+  tmp = g_strdup_printf("%s/mood-button.png", mood_path);
   image = gtk_image_new_from_file(tmp);
   g_free(tmp);
+
   gtk_box_pack_start(GTK_BOX(bbox), image, FALSE, FALSE, 0);
 
   g_signal_connect(G_OBJECT(mood_button), "clicked", G_CALLBACK(mood_make_dialog_cb),
 		   gtkconv);
 
-  gtk_box_pack_start(GTK_BOX(gtkconv->toolbar), mood_button, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(hbox), mood_button, FALSE, FALSE, 0);
 
   gtk_widget_show_all(bbox);
   gtk_widget_show(mood_button);
@@ -229,7 +246,8 @@ mood_make_dialog_cb(GtkWidget *fake, PidginConversation *gtkconv)
     }
     mood_full_path = g_strdup_printf("%s/%s.png", mood_path, moodstrings[i]);
     ml->text = g_strdup(moodstrings[i]);
-    ml->button = mood_button_from_file(mood_full_path, moodstrings[i], dialog);
+    ml->button = mood_button_from_file(mood_full_path, moodstrings[i], dialog,
+				       gtkconv);
     gtk_tooltips_set_tip(toolbar->tooltips, ml->button, moodstrings[i], NULL);
     ml->next = NULL;
 
@@ -244,6 +262,17 @@ mood_make_dialog_cb(GtkWidget *fake, PidginConversation *gtkconv)
   ml = tmp_ml;
 
   mood_make_button_list(mood_table, ml);
+
+  // Create entry field (for mood text)
+  GtkWidget *mood_field;
+  GtkWidget *line;
+
+  line = gtk_hbox_new(FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(mood_table), line, FALSE, FALSE, 0);
+
+  mood_field = gtk_entry_new();
+  gtk_box_pack_start(GTK_BOX(mood_table), mood_field, FALSE, FALSE, 0);
+  g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_field", mood_field);
 
   scrolled = gtk_scrolled_window_new (NULL, NULL);
   gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW (scrolled),
@@ -274,9 +303,15 @@ mood_make_dialog_cb(GtkWidget *fake, PidginConversation *gtkconv)
 }
 
 GtkWidget *
-mood_button_from_file(const char *filename, char *mood, GtkWidget *dialog)
+mood_button_from_file(const char *filename, char *mood, GtkWidget *dialog,
+		      PidginConversation *gtkconv)
 {
   GtkWidget *button, *image;
+  struct mood_data *mdata;
+
+  mdata = g_new0(struct mood_data, 1);
+  mdata->dialog = dialog;
+  mdata->gtkconv = gtkconv;
 
   button = gtk_button_new();
 
@@ -288,24 +323,45 @@ mood_button_from_file(const char *filename, char *mood, GtkWidget *dialog)
   gtk_container_add(GTK_CONTAINER(button), image);
 
   g_signal_connect(G_OBJECT(button), "clicked",
-                   G_CALLBACK(mood_button_cb), dialog);
+                   G_CALLBACK(mood_button_cb), mdata);
 
   return button;
 }
 
 
 static void
-mood_button_cb(GtkWidget *widget, GtkWidget *dialog)
+mood_button_cb(GtkWidget *widget, struct mood_data *mdata)
 {
-  char *mood_text;
+  char *mood_text, *mood_message = NULL;
+  GtkWidget *mood_field;
 
+  // XXX: maybe use indexing mood_text for withoud g_free, strcmp?
   mood_text = g_object_get_data(G_OBJECT(widget), "mood_text");
+  mood_field = g_object_get_data(G_OBJECT(mdata->gtkconv->toolbar), "mood_field");
 
-  current_mood = g_strdup(mood_text);
+  if (current_mood)
+    g_free(current_mood);
+  if (current_mood_message)
+    g_free(current_mood_message);
 
-  purple_debug_misc(DBGID, "make message hook %s\n", mood_text);
+  if (strcmp(mood_text, "mood-done") == 0) {
+    current_mood = NULL;
+    current_mood_message = NULL;
+    mood_remove_status(mdata->gtkconv);
+  } else {
 
-  gtk_widget_destroy(dialog);
+    if (mood_field) {
+      mood_message = gtk_entry_get_text((GtkEntry*)mood_field);
+      purple_debug_misc(DBGID, "<text> %s\n", mood_message);
+    }
+
+    current_mood = g_strdup(mood_text);
+    current_mood_message = g_strdup(mood_message);
+
+    mood_create_status(widget, mdata->gtkconv);
+  }
+
+  gtk_widget_destroy(mdata->dialog);
   return;
 }
 
@@ -325,7 +381,7 @@ mood_make_button_list(GtkWidget *container, struct mood_button_list *list)
     gtk_box_pack_start(GTK_BOX(line), list->button, FALSE, FALSE, 0);
     gtk_widget_show(list->button);
     mood_count++;
-    if (mood_count > 5) {
+    if (mood_count > 6) {
       if (list->next) {
         line = gtk_hbox_new(FALSE, 0);
         gtk_box_pack_start(GTK_BOX(container), line, FALSE, FALSE, 0);
@@ -338,18 +394,56 @@ mood_make_button_list(GtkWidget *container, struct mood_button_list *list)
 static void
 mood_remove_button(PidginConversation *gtkconv)
 {
-  GtkWidget *mood_button, *mood_bbox;
+  GtkWidget *mood_button;
 
   mood_button = g_object_get_data(G_OBJECT(gtkconv->toolbar),
                                   "mood_button");
-  mood_bbox = g_object_get_data(G_OBJECT(gtkconv->toolbar),
-                                "mood_bbox");
-
   if (mood_button) {
     gtk_widget_destroy(mood_button);
-    gtk_widget_destroy(mood_bbox);
-    g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_bbox", NULL);
     g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_button", NULL);
+  }
+
+  // Delete all button
+  mood_remove_status(gtkconv);
+}
+
+static void
+mood_create_status(GtkWidget *widget, PidginConversation *gtkconv)
+{
+  GtkWidget *mood_status;
+  gchar *tmp, *mood_path;
+
+  mood_status = g_object_get_data(G_OBJECT(gtkconv->toolbar), "mood_status");
+
+  if (mood_status) {
+    gtk_widget_destroy(mood_status);
+  }
+
+  mood_path = purple_prefs_get_string(PREF_MOOD_PATH);
+  tmp = g_strdup_printf("%s/%s.png", mood_path, current_mood);
+
+  mood_status = gtk_image_new_from_file(tmp);
+  g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_status", mood_status);
+
+  g_free(tmp);
+
+  gtk_box_pack_start(GTK_BOX(gtkconv->toolbar), mood_status, FALSE, FALSE, 0);
+
+  gtk_widget_show_all(mood_status);
+}
+
+
+static void
+mood_remove_status(PidginConversation *gtkconv)
+{
+  GtkWidget *mood_status;
+
+  mood_status = g_object_get_data(G_OBJECT(gtkconv->toolbar),
+                                "mood_status");
+
+  if (mood_status) {
+    gtk_widget_destroy(mood_status);
+    g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_status", NULL);
   }
 }
 
