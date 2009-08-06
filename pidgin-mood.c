@@ -119,7 +119,6 @@ static const char * const moodstrings[] = {
         "surprised",
         "thirsty",
         "worried",
-	"mood-done", // It is not default mood!
         NULL
 };
 
@@ -189,7 +188,7 @@ mood_create_button(PidginConversation *gtkconv)
 
   hbox = g_object_get_data(G_OBJECT(gtkconv->toolbar), "wide-view");
 
-  mood_button = gtk_button_new();
+  mood_button = gtk_toggle_button_new();
   bbox = gtk_vbox_new(FALSE, 0);
   g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_bbox", bbox);
   g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_button", mood_button);
@@ -204,8 +203,8 @@ mood_create_button(PidginConversation *gtkconv)
 
   gtk_box_pack_start(GTK_BOX(bbox), image, FALSE, FALSE, 0);
 
-  g_signal_connect(G_OBJECT(mood_button), "clicked", G_CALLBACK(mood_make_dialog_cb),
-		   gtkconv);
+  g_signal_connect(G_OBJECT(mood_button), "clicked",
+		   G_CALLBACK(mood_make_dialog_cb), gtkconv);
 
   gtk_box_pack_start(GTK_BOX(hbox), mood_button, FALSE, FALSE, 0);
 
@@ -214,7 +213,7 @@ mood_create_button(PidginConversation *gtkconv)
 }
 
 static void
-mood_make_dialog_cb(GtkWidget *fake, PidginConversation *gtkconv)
+mood_make_dialog_cb(GtkWidget *button, PidginConversation *gtkconv)
 {
   GtkWidget *dialog, *vbox;
   GtkWidget *mood_table = NULL;
@@ -224,6 +223,18 @@ mood_make_dialog_cb(GtkWidget *fake, PidginConversation *gtkconv)
   struct mood_button_list *ml, *prev_ml = NULL, *tmp_ml = NULL;
   gchar *mood_full_path, *mood_path;
   int i;
+
+  // if button pressed, delete mood status
+  if (!gtk_toggle_button_get_active((GtkToggleButton *)button)) {
+    if (current_mood)
+      g_free(current_mood);
+    if (current_mood_message)
+      g_free(current_mood_message);
+    current_mood = NULL;
+    current_mood_message = NULL;
+    mood_remove_status(gtkconv);
+    return;
+  }
 
   mood_path = purple_prefs_get_string(PREF_MOOD_PATH);
 
@@ -338,22 +349,15 @@ mood_button_cb(GtkWidget *widget, struct mood_data *mdata)
   if (current_mood_message)
     g_free(current_mood_message);
 
-  if (strcmp(mood_text, "mood-done") == 0) {
-    current_mood = NULL;
-    current_mood_message = NULL;
-    mood_remove_status(mdata->gtkconv);
-  } else {
-
-    if (mood_field) {
-      mood_message = gtk_entry_get_text((GtkEntry*)mood_field);
-      purple_debug_misc(DBGID, "<text> %s\n", mood_message);
-    }
-
-    current_mood = g_strdup(mood_text);
-    current_mood_message = g_strdup(mood_message);
-
-    mood_create_status(widget, mdata->gtkconv);
+  if (mood_field) {
+    mood_message = gtk_entry_get_text((GtkEntry*)mood_field);
+    purple_debug_misc(DBGID, "<text> %s\n", mood_message);
   }
+
+  current_mood = g_strdup(mood_text);
+  current_mood_message = g_strdup(mood_message);
+
+  mood_create_status(widget, mdata->gtkconv);
 
   gtk_widget_destroy(mdata->dialog);
   return;
