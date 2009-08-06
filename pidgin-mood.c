@@ -17,12 +17,6 @@
  * Floor, Boston, MA 02110-1301, USA.
  */
 
-/*
- * Known bugs:
- *
- * - Icon mood button left side;
- */
-
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -162,7 +156,7 @@ mood_make_stanza(PurpleConnection *gc, char **packet, gpointer null)
   xmlnode_new_child(moodnode, current_mood);
 
   // Add <text> </text> if mood_message exists
-  if (current_mood_message) {
+  if (current_mood_message && strlen(current_mood_message) > 0) {
     text = xmlnode_new("text");
     xmlnode_insert_data(text, current_mood_message, strlen(current_mood_message));
     xmlnode_insert_child(moodnode, text);
