@@ -42,6 +42,8 @@
 #include <gtkimhtmltoolbar.h>
 #include <conversation.h>
 
+#include <gdk/gdkkeysyms.h>
+
 #define DBGID "mood"
 #define PREF_PREFIX "/plugins/gtk/mood-plugin"
 #define PREF_MOOD_PATH PREF_PREFIX "/moods_path"
@@ -136,6 +138,7 @@ static GtkWidget *mood_button_from_file(const char *, char *, GtkWidget *,
 static void mood_set_path_cb (GtkWidget *, GtkWidget *);
 static void mood_create_status(GtkWidget *, PidginConversation *);
 static void mood_remove_status(PidginConversation *);
+static gboolean mood_dialog_input_cb(GtkWidget *, GdkEvent *, PidginConversation *);
 
 static void disconnect_prefs_callbacks(GtkObject *, gpointer );
 
@@ -212,6 +215,22 @@ mood_create_button(PidginConversation *gtkconv)
   gtk_widget_show(mood_button);
 }
 
+static gboolean
+mood_dialog_input_cb(GtkWidget *dialog, GdkEvent *event, PidginConversation *gtkconv)
+{
+  GtkWidget *button = g_object_get_data(G_OBJECT(gtkconv->toolbar), "mood_button");
+
+  if ((event->type == GDK_KEY_PRESS && event->key.keyval == GDK_Escape) ||
+      (event->type == GDK_BUTTON_PRESS && event->button.button == 1)) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(button), FALSE);
+    g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_dialog", NULL);
+    gtk_widget_destroy(dialog);
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
 static void
 mood_make_dialog_cb(GtkWidget *button, PidginConversation *gtkconv)
 {
@@ -224,7 +243,14 @@ mood_make_dialog_cb(GtkWidget *button, PidginConversation *gtkconv)
   gchar *mood_full_path, *mood_path;
   int i;
 
-  // if button pressed, delete mood status
+  // Delete other dialog
+  if (g_object_get_data(G_OBJECT(gtkconv->toolbar), "mood_dialog")) {
+    gtk_widget_destroy(g_object_get_data(G_OBJECT(gtkconv->toolbar), "mood_dialog"));
+    g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_dialog", NULL);
+    return;
+  }
+
+  // If button pressed, delete mood status
   if (!gtk_toggle_button_get_active((GtkToggleButton *)button)) {
     if (current_mood)
       g_free(current_mood);
@@ -239,6 +265,7 @@ mood_make_dialog_cb(GtkWidget *button, PidginConversation *gtkconv)
   mood_path = purple_prefs_get_string(PREF_MOOD_PATH);
 
   dialog = pidgin_create_dialog("Mood", 0, "mood_dialog", FALSE);
+  g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_dialog", dialog);
   gtk_window_set_position(GTK_WINDOW(dialog), GTK_WIN_POS_MOUSE);
   vbox = pidgin_dialog_get_vbox_with_properties(GTK_DIALOG(dialog), FALSE, 0);
 
@@ -294,8 +321,8 @@ mood_make_dialog_cb(GtkWidget *button, PidginConversation *gtkconv)
   viewport = gtk_widget_get_parent(mood_table);
   gtk_viewport_set_shadow_type(GTK_VIEWPORT(viewport), GTK_SHADOW_NONE);
 
-  g_signal_connect(G_OBJECT(dialog), "destroy",
-                   G_CALLBACK(gtk_widget_destroy), NULL);
+  g_signal_connect(G_OBJECT(dialog), "key-press-event",
+		   G_CALLBACK(mood_dialog_input_cb), gtkconv);
 
   while (ml) {
     struct mood_button_list *tmp = ml->next;
@@ -327,8 +354,7 @@ mood_button_from_file(const char *filename, char *mood, GtkWidget *dialog,
 
   gtk_container_add(GTK_CONTAINER(button), image);
 
-  g_signal_connect(G_OBJECT(button), "clicked",
-                   G_CALLBACK(mood_button_cb), mdata);
+  g_signal_connect(G_OBJECT(button), "clicked", G_CALLBACK(mood_button_cb), mdata);
 
   return button;
 }
@@ -340,7 +366,7 @@ mood_button_cb(GtkWidget *widget, struct mood_data *mdata)
   char *mood_text, *mood_message = NULL;
   GtkWidget *mood_field;
 
-  // XXX: maybe use indexing mood_text for withoud g_free, strcmp?
+  // XXX: maybe use indexing mood_text for withoud g_free?
   mood_text = g_object_get_data(G_OBJECT(widget), "mood_text");
   mood_field = g_object_get_data(G_OBJECT(mdata->gtkconv->toolbar), "mood_field");
 
@@ -359,7 +385,9 @@ mood_button_cb(GtkWidget *widget, struct mood_data *mdata)
 
   mood_create_status(widget, mdata->gtkconv);
 
+  g_object_set_data(G_OBJECT(mdata->gtkconv->toolbar), "mood_dialog", NULL);
   gtk_widget_destroy(mdata->dialog);
+
   return;
 }
 
@@ -394,14 +422,13 @@ mood_remove_button(PidginConversation *gtkconv)
 {
   GtkWidget *mood_button;
 
-  mood_button = g_object_get_data(G_OBJECT(gtkconv->toolbar),
-                                  "mood_button");
+  mood_button = g_object_get_data(G_OBJECT(gtkconv->toolbar), "mood_button");
+
   if (mood_button) {
     gtk_widget_destroy(mood_button);
     g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_button", NULL);
   }
 
-  // Delete all button
   mood_remove_status(gtkconv);
 }
 
@@ -422,12 +449,11 @@ mood_create_status(GtkWidget *widget, PidginConversation *gtkconv)
 
   mood_status = gtk_image_new_from_file(tmp);
   g_object_set_data(G_OBJECT(gtkconv->toolbar), "mood_status", mood_status);
-
-  g_free(tmp);
-
   gtk_box_pack_start(GTK_BOX(gtkconv->toolbar), mood_status, FALSE, FALSE, 0);
 
   gtk_widget_show_all(mood_status);
+
+  g_free(tmp);
 }
 
 
@@ -436,8 +462,7 @@ mood_remove_status(PidginConversation *gtkconv)
 {
   GtkWidget *mood_status;
 
-  mood_status = g_object_get_data(G_OBJECT(gtkconv->toolbar),
-                                "mood_status");
+  mood_status = g_object_get_data(G_OBJECT(gtkconv->toolbar), "mood_status");
 
   if (mood_status) {
     gtk_widget_destroy(mood_status);
